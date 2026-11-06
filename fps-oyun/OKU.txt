@@ -1,0 +1,14 @@
+BILGISAYARDA: Node.js LTS kur (nodejs.org), baslat.bat'a cift tikla.
+
+TELEFONDA:
+- Telefon ve bilgisayar AYNI Wi-Fi'da olmali.
+- baslat.bat penceresinde "Telefondan (ayni Wi-Fi): http://192.168.x.x:3000" yazar. O adresi telefon tarayicisina yaz.
+- Windows guvenlik duvari sorarsa "Ozel aglara izin ver" de.
+- Telefonu yatay tut. Sol cember: hareket, ekranin sagi: bakis, ATES ve ZIPLA tuslari.
+- Internetten oynamak icin: cloudflared tunnel --url http://localhost:3000
+
+MODELLER (opsiyonel, CC0):
+- public\models\player.glb : karakter (otomatik 1.8 m boyuna olceklenir)
+- public\models\map.glb    : harita / ortam
+- Kaynaklar: kenney.nl, quaternius.com. Lisansi her zaman kontrol et.
+- Modeller yoksa oyun basit kutu karakter ve kutu engellerle calisir.

@@ -1,0 +1,128 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>FPS</title>
+<style>
+html,body{margin:0;overflow:hidden;font:16px sans-serif;touch-action:none;user-select:none;-webkit-user-select:none;background:#000}
+#h{position:fixed;top:10px;left:10px;color:#fff;background:#0008;padding:6px 10px;z-index:5}
+#c{position:fixed;top:50%;left:50%;color:#fff;transform:translate(-50%,-50%);z-index:5;pointer-events:none}
+#ui{display:none}
+#joy{position:fixed;left:24px;bottom:24px;width:120px;height:120px;border-radius:50%;background:#fff3;border:2px solid #fff6;z-index:6}
+#knob{position:absolute;left:35px;top:35px;width:50px;height:50px;border-radius:50%;background:#fffa;pointer-events:none}
+.btn{position:fixed;border-radius:50%;border:2px solid #fff8;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:bold;z-index:6}
+#fire{right:30px;bottom:40px;width:90px;height:90px;background:#f336}
+#jump{right:140px;bottom:30px;width:64px;height:64px;background:#36f6}
+</style></head><body>
+<div id="h">Tıkla ve oyna | WASD + boşluk + sol tık</div><div id="c">+</div>
+<div id="ui"><div id="joy"><div id="knob"></div></div><div id="jump" class="btn">ZIPLA</div><div id="fire" class="btn">ATEŞ</div></div>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {clone as skClone} from 'three/addons/utils/SkeletonUtils.js';
+const isTouch='ontouchstart' in window||navigator.maxTouchPoints>0;
+const clamp=v=>Math.max(-1.5,Math.min(1.5,v));
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x87ceeb);scene.fog=new THREE.Fog(0x87ceeb,30,120);
+const cam=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.1,300);cam.rotation.order='YXZ';
+const ren=new THREE.WebGLRenderer({antialias:!isTouch});ren.setPixelRatio(Math.min(devicePixelRatio,2));
+ren.setSize(innerWidth,innerHeight);document.body.appendChild(ren.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff,0x556655,1.2));
+const sun=new THREE.DirectionalLight(0xffffff,1.5);sun.position.set(20,40,10);scene.add(sun);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshLambertMaterial({color:0x5a8f4a}));
+ground.rotation.x=-Math.PI/2;scene.add(ground);
+const loader=new GLTFLoader();
+// Opsiyonel CC0 harita: public/models/map.glb
+loader.load('/models/map.glb',g=>scene.add(g.scene),undefined,()=>{
+  for(let i=0;i<25;i++){const b=new THREE.Mesh(new THREE.BoxGeometry(3,3,3),new THREE.MeshLambertMaterial({color:0x888888}));
+    b.position.set(Math.random()*80-40,1.5,Math.random()*80-40);scene.add(b);}
+});
+// Opsiyonel CC0 karakter: public/models/player.glb (otomatik 1.8 m boyuna ölçeklenir)
+let playerModel=null;
+loader.load('/models/player.glb',g=>{
+  const box=new THREE.Box3().setFromObject(g.scene);const k=1.8/(box.max.y-box.min.y||1);
+  g.scene.scale.setScalar(k);const b2=new THREE.Box3().setFromObject(g.scene);g.scene.position.y=-b2.min.y;
+  const w=new THREE.Group();w.add(g.scene);playerModel=w;
+},undefined,()=>console.log('player.glb yok, basit karakter kullanılıyor'));
+const others=new Map(),targets=new Map();
+function fallbackChar(){
+  const g=new THREE.Group();const M=c=>new THREE.MeshLambertMaterial({color:c});
+  const body=new THREE.Mesh(new THREE.BoxGeometry(0.7,1.0,0.4),M(0xcc3333));body.position.y=1.0;
+  const head=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.4,0.4),M(0xffcc99));head.position.y=1.7;
+  const legs=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.6,0.35),M(0x333366));legs.position.y=0.3;
+  const gun=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.12,0.7),M(0x222222));gun.position.set(0.3,1.2,0.4);
+  g.add(body,head,legs,gun);return g;
+}
+function makeOther(id){
+  const g=new THREE.Group();g.userData.id=id;
+  g.add(playerModel?skClone(playerModel):fallbackChar());
+  scene.add(g);others.set(id,g);return g;
+}
+const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);let me=0;
+const pos=new THREE.Vector3(0,1.6,0);let vy=0,yaw=0,pitch=0,onGround=true;
+ws.onmessage=e=>{const d=JSON.parse(e.data);
+  if(d.t==='hello'){me=d.id;pos.set(d.x,1.6,d.z);}
+  if(d.t==='kill'&&d.id===me){pos.set(d.x,1.6,d.z);}
+  if(d.t==='state'){
+    const ids=new Set();
+    for(const p of d.players){
+      if(p.id===me){document.getElementById('h').textContent='HP: '+p.hp+' | Kill: '+p.kills;continue;}
+      ids.add(p.id);if(!others.has(p.id))makeOther(p.id);
+      targets.set(p.id,p);
+    }
+    for(const [id,g] of others)if(!ids.has(id)){scene.remove(g);others.delete(id);targets.delete(id);}
+  }};
+const keys={};addEventListener('keydown',e=>keys[e.code]=1);addEventListener('keyup',e=>keys[e.code]=0);
+let mv={x:0,y:0},jumpHeld=false;
+function shoot(){
+  const rc=new THREE.Raycaster();rc.setFromCamera({x:0,y:0},cam);
+  const hits=rc.intersectObjects([...others.values()],true);
+  if(hits.length){let o=hits[0].object;while(o&&o.userData.id===undefined)o=o.parent;
+    if(o&&ws.readyState===1)ws.send(JSON.stringify({t:'hit',id:o.userData.id}));}
+}
+if(!isTouch){
+  ren.domElement.addEventListener('click',()=>{
+    if(document.pointerLockElement!==ren.domElement){ren.domElement.requestPointerLock();return;}
+    shoot();
+  });
+  addEventListener('mousemove',e=>{if(document.pointerLockElement){yaw-=e.movementX*0.002;pitch=clamp(pitch-e.movementY*0.002);}});
+}else{
+  document.getElementById('ui').style.display='block';
+  document.getElementById('c').style.display='block';
+  document.getElementById('h').textContent='Sol: hareket | Sağ: bak | Telefonu yatay tut';
+  const joy=document.getElementById('joy'),knob=document.getElementById('knob'),R=45;
+  let joyId=null,lookId=null,lx=0,ly=0,fireTimer=null;
+  const joyMove=t=>{const r=joy.getBoundingClientRect();
+    let dx=t.clientX-(r.left+r.width/2),dy=t.clientY-(r.top+r.height/2);const l=Math.hypot(dx,dy);
+    if(l>R){dx*=R/l;dy*=R/l;}mv.x=dx/R;mv.y=-dy/R;knob.style.transform=`translate(${dx}px,${dy}px)`;};
+  const joyReset=()=>{joyId=null;mv.x=mv.y=0;knob.style.transform='';};
+  joy.addEventListener('touchstart',e=>{e.preventDefault();joyId=e.changedTouches[0].identifier;joyMove(e.changedTouches[0]);},{passive:false});
+  ren.domElement.addEventListener('touchstart',e=>{e.preventDefault();const t=e.changedTouches[0];
+    if(lookId===null){lookId=t.identifier;lx=t.clientX;ly=t.clientY;}},{passive:false});
+  addEventListener('touchmove',e=>{e.preventDefault();for(const t of e.changedTouches){
+    if(t.identifier===joyId)joyMove(t);
+    else if(t.identifier===lookId){yaw-=(t.clientX-lx)*0.006;pitch=clamp(pitch-(t.clientY-ly)*0.006);lx=t.clientX;ly=t.clientY;}
+  }},{passive:false});
+  const end=e=>{for(const t of e.changedTouches){if(t.identifier===joyId)joyReset();if(t.identifier===lookId)lookId=null;}};
+  addEventListener('touchend',end);addEventListener('touchcancel',end);
+  const fire=document.getElementById('fire'),jump=document.getElementById('jump');
+  fire.addEventListener('touchstart',e=>{e.preventDefault();shoot();clearInterval(fireTimer);fireTimer=setInterval(shoot,300);},{passive:false});
+  const stopFire=()=>clearInterval(fireTimer);
+  fire.addEventListener('touchend',stopFire);fire.addEventListener('touchcancel',stopFire);
+  jump.addEventListener('touchstart',e=>{e.preventDefault();jumpHeld=true;},{passive:false});
+  jump.addEventListener('touchend',()=>jumpHeld=false);jump.addEventListener('touchcancel',()=>jumpHeld=false);
+}
+let last=performance.now(),acc=0;
+function loop(t){requestAnimationFrame(loop);const dt=Math.min((t-last)/1000,0.05);last=t;
+  let f=(keys.KeyW?1:0)-(keys.KeyS?1:0)+mv.y,s=(keys.KeyD?1:0)-(keys.KeyA?1:0)+mv.x;
+  const l=Math.hypot(f,s);if(l>1){f/=l;s/=l;}
+  const sp=8*dt;
+  pos.x+=(-Math.sin(yaw)*f+Math.cos(yaw)*s)*sp;pos.z+=(-Math.cos(yaw)*f-Math.sin(yaw)*s)*sp;
+  if((keys.Space||jumpHeld)&&onGround){vy=7;onGround=false;}
+  vy-=20*dt;pos.y+=vy*dt;if(pos.y<=1.6){pos.y=1.6;vy=0;onGround=true;}
+  cam.position.copy(pos);cam.rotation.set(pitch,yaw,0);
+  for(const [id,g] of others){const p=targets.get(id);if(!p)continue;
+    g.position.lerp(new THREE.Vector3(p.x,p.y-1.6,p.z),0.25);g.rotation.y=p.ry;}
+  acc+=dt;if(acc>0.05&&ws.readyState===1&&me){acc=0;ws.send(JSON.stringify({t:'s',x:pos.x,y:pos.y,z:pos.z,ry:yaw+Math.PI}));}
+  ren.render(scene,cam);}
+requestAnimationFrame(loop);
+addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight);});
+</script></body></html>
